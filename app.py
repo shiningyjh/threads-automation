@@ -1,3 +1,4 @@
+import base64
 import re
 import os
 import streamlit as st
@@ -56,13 +57,11 @@ ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
 
 
 def get_stored_api_key() -> str:
-    # 클라우드 배포 환경: Streamlit secrets에서 읽기
     try:
         if "ANTHROPIC_API_KEY" in st.secrets:
             return st.secrets["ANTHROPIC_API_KEY"]
     except Exception:
         pass
-    # 로컬 환경: .env 파일에서 읽기
     return os.getenv("ANTHROPIC_API_KEY", "")
 
 
@@ -80,6 +79,43 @@ def build_analysis_prompt(script: str, country: str) -> str:
 
 [분석할 대본]
 {script}
+
+---
+다음 형식으로 출력하세요:
+
+**📊 바이럴 구조 분석**
+
+🪝 **후킹 전략**: 첫 문장이 {country} 2030~40대 여성의 시선을 어떻게 멈추게 하는가? (구체적 기법 명시: 의문 유발/반전 예고/공감 유도/충격/궁금증/{country} 특유의 정서 활용 등)
+
+📐 **콘텐츠 구조**: 전체 흐름의 패턴 (예: 문제제기→공감→해결, 경험담→반전→교훈, 리스트형→점층 등)
+
+💬 **문체와 톤**: {country} SNS 특유의 어투, 문장 길이, 줄바꿈 방식, 이모지 사용 여부
+
+❤️ **감정 트리거**: {country} 2030~40대 여성이 공유하고 싶게 만드는 감정 (공감/놀라움/위로/분노/웃음/정보성 만족감 등)
+
+🔚 **마무리 기법**: 끝맺음이 어떻게 여운을 남기거나 저장·공유를 유도하는가
+
+📏 **형식 특징**: 길이, 단락 구성, {country} 스레드 특유의 시각적 구조
+
+---
+**💡 {country} 2030~40대 여성에게 잘 통할 아이디어 6가지** (한국어로 작성)
+(위에서 분석한 구조와 감정 트리거를 그대로 활용할 수 있는 다른 주제)
+
+1. [주제] — [이 주제가 {country} 2030~40대 여성에게 잘 통하는 이유]
+2. [주제] — [이유]
+3. [주제] — [이유]
+4. [주제] — [이유]
+5. [주제] — [이유]
+6. [주제] — [이유]"""
+
+
+def build_analysis_prompt_for_image(country: str) -> str:
+    return f"""당신은 {country} 스레드(Threads) 바이럴 콘텐츠 전문 분석가입니다.
+{country}의 SNS 문화와 {country} 2030~40대 여성 독자층의 감수성을 깊이 이해하고 있습니다.
+
+이 스크린샷은 {country} Threads에서 반응이 좋았던 게시글입니다.
+스크린샷 속 텍스트를 읽고, 왜 이 글이 높은 반응을 얻었는지 분석해주세요.
+분석 결과와 아이디어는 반드시 한국어로 작성하세요.
 
 ---
 다음 형식으로 출력하세요:
@@ -177,7 +213,22 @@ def call_claude(prompt: str, max_tokens: int) -> str:
     return response.content[0].text
 
 
-# ── API 키 확인 ──────────────────────────────────────────────────────────────
+def call_claude_with_image(prompt: str, image_bytes: bytes, media_type: str, max_tokens: int) -> str:
+    client = Anthropic(api_key=st.session_state.api_key)
+    b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=max_tokens,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+    return response.content[0].text
+
 
 st.title("✍️ 스레드 대본 생성기")
 
@@ -201,8 +252,6 @@ if not st.session_state.api_key:
             st.error("올바른 API 키 형식이 아니에요. 'sk-ant-'로 시작하는 키를 입력해주세요.")
     st.stop()
 
-# ── 사이드바 ─────────────────────────────────────────────────────────────────
-
 with st.sidebar:
     st.markdown("### ⚙️ 설정")
     st.caption("API 키가 저장되어 있습니다.")
@@ -210,8 +259,6 @@ with st.sidebar:
         st.session_state.api_key = ""
         save_api_key_locally("")
         st.rerun()
-
-# ── 본문 ─────────────────────────────────────────────────────────────────────
 
 st.caption("떡상한 대본 분석 → 아이디어 6개 → 새 대본 3개")
 
@@ -228,18 +275,47 @@ else:
 
 st.divider()
 
-# ── STEP 1 ──────────────────────────────────────────────────────────────────
 st.markdown("### 1단계: 대본 분석")
-script_input = st.text_area(
-    "떡상한 스레드 대본을 붙여넣으세요",
-    placeholder="대본을 여기에 붙여넣으세요...",
-    height=200,
-)
+
+tab_text, tab_image = st.tabs(["📝 텍스트 붙여넣기", "📷 스크린샷 업로드"])
+
+with tab_text:
+    script_input = st.text_area(
+        "떡상한 스레드 대본을 붙여넣으세요",
+        placeholder="대본을 여기에 붙여넣으세요...",
+        height=200,
+    )
+
+with tab_image:
+    st.caption("반응 좋았던 Threads 게시글 스크린샷을 올리면 자동으로 읽어서 분석해요")
+    uploaded_file = st.file_uploader(
+        "스크린샷 업로드 (PNG, JPG)",
+        type=["png", "jpg", "jpeg"],
+        label_visibility="collapsed",
+    )
+    if uploaded_file:
+        st.image(uploaded_file, use_container_width=True)
 
 if st.button("🔍 분석하기", type="primary"):
-    if not script_input.strip():
-        st.warning("대본을 먼저 입력해주세요.")
-    else:
+    if uploaded_file is not None:
+        with st.spinner("스크린샷 분석 중입니다... (약 20~30초)"):
+            try:
+                image_bytes = uploaded_file.getvalue()
+                media_type = uploaded_file.type
+                analysis = call_claude_with_image(
+                    build_analysis_prompt_for_image(country),
+                    image_bytes,
+                    media_type,
+                    max_tokens=2000,
+                )
+                st.session_state.analysis = analysis
+                st.session_state.ideas = parse_ideas(analysis)
+                st.session_state.country = country
+                st.session_state.is_foreign = is_foreign
+                st.session_state.scripts = None
+            except Exception as e:
+                st.error(f"오류가 발생했습니다: {e}")
+    elif script_input.strip():
         with st.spinner("분석 중입니다... (약 20~30초)"):
             try:
                 analysis = call_claude(
@@ -253,8 +329,9 @@ if st.button("🔍 분석하기", type="primary"):
                 st.session_state.scripts = None
             except Exception as e:
                 st.error(f"오류가 발생했습니다: {e}")
+    else:
+        st.warning("텍스트를 붙여넣거나 스크린샷을 업로드해주세요.")
 
-# ── STEP 2 ──────────────────────────────────────────────────────────────────
 if st.session_state.get("analysis"):
     st.divider()
     st.markdown(st.session_state.analysis)
@@ -291,7 +368,6 @@ if st.session_state.get("analysis"):
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
-# ── STEP 3 ──────────────────────────────────────────────────────────────────
 if st.session_state.get("scripts"):
     st.divider()
     st.markdown("### 3단계: 대본 선택 및 복사")
